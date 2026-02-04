@@ -6,7 +6,15 @@ from pytastic.validators import (
 )
 from pytastic.exceptions import SchemaDefinitionError
 from pytastic.utils import parse_constraints, normalize_key
-from typing import get_type_hints, NotRequired, Required
+
+try:
+    from typing import NotRequired, Required, get_type_hints
+except ImportError:
+    try:
+        from typing_extensions import NotRequired, Required, get_type_hints
+    except ImportError:
+        NotRequired = Required = object() # Fallback
+        from typing import get_type_hints
 
 class SchemaCompiler:
     """Compiles Python types (TypedDict, Annotated, etc.) into Validators."""
@@ -57,7 +65,10 @@ class SchemaCompiler:
             if base_origin is Union:
                 union_mode = "one_of" if constraints.get("one_of") else "any_of"
                 validators = [self.compile(t) for t in get_args(base_type)]
-                return UnionValidator(validators, mode=union_mode)
+                return UnionValidator(validators, mode=union_mode, metadata=constraints)
+
+            if base_origin is Literal:
+                return LiteralValidator(get_args(base_type), metadata=constraints)
 
             if self._is_typeddict(base_type):
                  return self._compile_typeddict(base_type, constraints)
@@ -75,6 +86,10 @@ class SchemaCompiler:
             return UnionValidator([self.compile(t) for t in args], mode="any_of")
         if origin is Literal:
             return LiteralValidator(args)
+            
+        if origin is NotRequired or origin is Required:
+             return self.compile(args[0])
+
         if schema is int or schema is float:
              return NumberValidator({}, number_type=schema)
         if schema is str:
@@ -83,6 +98,8 @@ class SchemaCompiler:
              return AnyValidator()
         if schema is Any:
              return AnyValidator()
+        if schema is type(None):
+             return LiteralValidator((None,))
         raise SchemaDefinitionError(f"Unsupported type: {schema}")
 
     def _is_typeddict(self, t: Type) -> bool:

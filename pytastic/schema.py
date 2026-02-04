@@ -25,20 +25,26 @@ class JsonSchemaGenerator:
         return schema
 
     def _visit(self, validator: Validator) -> Dict[str, Any]:
+        schema = {}
         if isinstance(validator, NumberValidator):
-            return self._visit_number(validator)
+            schema = self._visit_number(validator)
         elif isinstance(validator, StringValidator):
-            return self._visit_string(validator)
+            schema = self._visit_string(validator)
         elif isinstance(validator, CollectionValidator):
-            return self._visit_collection(validator)
+            schema = self._visit_collection(validator)
         elif isinstance(validator, ObjectValidator):
-            return self._visit_object(validator)
+            schema = self._visit_object(validator)
         elif isinstance(validator, UnionValidator):
-            return self._visit_union(validator)
+            schema = self._visit_union(validator)
         elif isinstance(validator, LiteralValidator):
-            return self._visit_literal(validator)
+            schema = self._visit_literal(validator)
         
-        return {} # Fallback
+        # Inject metadata
+        if validator.title: schema["title"] = validator.title
+        if validator.description: schema["description"] = validator.description
+        if validator.default is not None: schema["default"] = validator.default
+        
+        return schema
 
     def _visit_number(self, v: NumberValidator) -> Dict[str, Any]:
         schema: Dict[str, Any] = {"type": "integer" if v.number_type is int else "number"}
@@ -103,6 +109,8 @@ class JsonSchemaGenerator:
         return {key: schemas}
 
     def _visit_literal(self, v: LiteralValidator) -> Dict[str, Any]:
+        if len(v.allowed_values) == 1 and v.allowed_values[0] is None:
+             return {"type": "null"}
         return {"enum": list(v.allowed_values)}
 
 def to_json_string(schema: Dict[str, Any]) -> str:

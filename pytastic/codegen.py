@@ -3,6 +3,14 @@ from typing import get_type_hints
 from pytastic.exceptions import SchemaDefinitionError
 from pytastic.utils import parse_constraints
 
+try:
+    from typing import NotRequired, Required
+except ImportError:
+    try:
+        from typing_extensions import NotRequired, Required
+    except ImportError:
+        NotRequired = Required = object() # Fallback
+
 
 class CodegenCompiler:
     """Generates optimized Python validation functions from type schemas."""
@@ -105,6 +113,13 @@ class CodegenCompiler:
         
         if schema is bool:
             lines.append(f"{ind}# bool validation (passthrough)")
+            
+        if schema is type(None):
+            lines.append(f"{ind}if {var_name} is not None:")
+            lines.append(f"{ind}    raise ValidationError(f'Expected None at {{{path_var}}}', [{{'path': {path_var}, 'message': 'Must be None'}}])")
+
+        if origin is NotRequired or origin is Required:
+            return self._generate_validator(args[0], var_name, path_var, indent)
         
         return lines
     

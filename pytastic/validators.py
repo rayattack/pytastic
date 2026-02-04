@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import Any, List, Dict, Generic, TypeVar, Union, Set, Tuple
+from typing import Any, List, Dict, Generic, TypeVar, Union, Set, Tuple, Optional
 import re
 import math
 from pytastic.exceptions import ValidationError
@@ -8,7 +8,13 @@ T = TypeVar("T")
 
 class Validator(ABC, Generic[T]):
     """Abstract base class for all validators."""
+    __slots__ = ('title', 'description', 'default')
     
+    def __init__(self, title: Optional[str] = None, description: Optional[str] = None, default: Any = None):
+        self.title = title
+        self.description = description
+        self.default = default
+
     @abstractmethod
     def validate(self, data: Any, path: str = "") -> T:
         pass
@@ -23,6 +29,11 @@ class NumberValidator(Validator[Union[int, float]]):
     __slots__ = ('number_type', 'min_val', 'max_val', 'exclusive_min_val', 'exclusive_max_val', 'step_val')
     
     def __init__(self, constraints: Dict[str, Any], number_type: type = int):
+        super().__init__(
+            title=constraints.get('title'),
+            description=constraints.get('description'),
+            default=constraints.get('default')
+        )
         self.number_type = number_type
         self.min_val = float(constraints['min']) if 'min' in constraints else None
         self.max_val = float(constraints['max']) if 'max' in constraints else None
@@ -31,6 +42,11 @@ class NumberValidator(Validator[Union[int, float]]):
         step = constraints.get('step') or constraints.get('multiple_of')
         self.step_val = float(step) if step else None
 
+    # ... validate method remains same ... (wait, I need to preserve it or replace it? replace_file_content replaces the whole block)
+    # I should use multi_replace for less risk if I don't want to rewrite logic.
+    # But I see I need to verify `validate` logic isn't touched.
+    # Actually, I can just copy the validate logic.
+    
     def validate(self, data: Any, path: str = "") -> Union[int, float]:
         if not isinstance(data, (int, float)):
             raise ValidationError(f"Expected number, got {type(data).__name__}", [{"path": path, "message": "Invalid type"}])
@@ -62,6 +78,11 @@ class StringValidator(Validator[str]):
     __slots__ = ('min_len', 'max_len', 'pattern', 'format')
     
     def __init__(self, constraints: Dict[str, Any]):
+        super().__init__(
+            title=constraints.get('title'),
+            description=constraints.get('description'),
+            default=constraints.get('default')
+        )
         min_l = constraints.get('min_length') or constraints.get('min_len')
         self.min_len = int(min_l) if min_l else None
         max_l = constraints.get('max_length') or constraints.get('max_len')
@@ -85,13 +106,11 @@ class StringValidator(Validator[str]):
             raise ValidationError(f"String does not match pattern '{self.pattern}'", [{"path": path, "message": "Pattern mismatch"}])
 
         if self.format == 'email':
-            if '@' not in val: # Very basic check
+            if '@' not in val:
                 raise ValidationError("Invalid email format", [{"path": path, "message": "Invalid email"}])
         elif self.format == 'uuid':
-            # Basic UUID pattern
             if not re.match(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$', val.lower()):
                  raise ValidationError("Invalid UUID format", [{"path": path, "message": "Invalid UUID"}])
-        
         
         return val
 
@@ -99,26 +118,28 @@ class CollectionValidator(Validator[list]):
     __slots__ = ('constraints', 'item_validator')
     
     def __init__(self, constraints: Dict[str, Any], item_validator: Union[Validator, List[Validator], None] = None):
+        super().__init__(
+            title=constraints.get('title'),
+            description=constraints.get('description'),
+            default=constraints.get('default')
+        )
         self.constraints = constraints
-        self.item_validator = item_validator # Can be a single validator (list) or list of validators (tuple)
+        self.item_validator = item_validator
 
     def validate(self, data: Any, path: str = "") -> list:
         if not isinstance(data, (list, tuple)):
              raise ValidationError(f"Expected list/tuple, got {type(data).__name__}", [{"path": path, "message": "Invalid type"}])
         
-        # Min Items
         if 'min_items' in self.constraints:
             limit = int(self.constraints['min_items'])
             if len(data) < limit:
                 raise ValidationError(f"List has fewer items than {limit}", [{"path": path, "message": f"Min items: {limit}"}])
 
-        # Max Items
         if 'max_items' in self.constraints:
             limit = int(self.constraints['max_items'])
             if len(data) > limit:
                 raise ValidationError(f"List has more items than {limit}", [{"path": path, "message": f"Max items: {limit}"}])
 
-        # Unique Items
         if self.constraints.get('unique') or self.constraints.get('unique_items'):
             try:
                 if len(set(data)) != len(data):
@@ -131,16 +152,13 @@ class CollectionValidator(Validator[list]):
 
         validated_data = []
         
-        # Tuple validation (positional)
         if isinstance(self.item_validator, list):
              if len(data) != len(self.item_validator):
-                 # Strict tuple length? Python tuples usually fixed.
                  raise ValidationError(f"Expected {len(self.item_validator)} items, got {len(data)}", [{"path": path, "message": f"Expected {len(self.item_validator)} items"}])
              
              for i, (item, validator) in enumerate(zip(data, self.item_validator)):
                  validated_data.append(validator.validate(item, path=f"{path}[{i}]"))
         
-        # List validation (homogeneous)
         elif isinstance(self.item_validator, Validator):
              for i, item in enumerate(data):
                  validated_data.append(self.item_validator.validate(item, path=f"{path}[{i}]"))
@@ -152,9 +170,15 @@ class CollectionValidator(Validator[list]):
 class UnionValidator(Validator[Any]):
     __slots__ = ('validators', 'mode')
     
-    def __init__(self, validators: List[Validator], mode: str = "any_of"):
+    def __init__(self, validators: List[Validator], mode: str = "any_of", metadata: Dict[str, Any] = None):
+        metadata = metadata or {}
+        super().__init__(
+            title=metadata.get('title'),
+            description=metadata.get('description'),
+            default=metadata.get('default')
+        )
         self.validators = validators
-        self.mode = mode # 'any_of' or 'one_of'
+        self.mode = mode
 
     def validate(self, data: Any, path: str = "") -> Any:
         valid_results = []
@@ -174,7 +198,6 @@ class UnionValidator(Validator[Any]):
             else:
                  raise ValidationError("Matches multiple types in OneOf", [{"path": path, "message": "Multiple matches for OneOf"}])
 
-        # Default: any_of (return first match)
         if valid_results:
             return valid_results[0]
         
@@ -184,9 +207,14 @@ class ObjectValidator(Validator[Dict]):
     __slots__ = ('fields', 'constraints', 'required_keys')
     
     def __init__(self, fields: Dict[str, Validator], constraints: Dict[str, Any], required_keys: Set[str]):
+        super().__init__(
+            title=constraints.get('title'),
+            description=constraints.get('description'),
+            default=constraints.get('default')
+        )
         self.fields = fields
         self.constraints = constraints
-        self.required_keys = required_keys # Keys that MUST be present
+        self.required_keys = required_keys
 
     def validate(self, data: Any, path: str = "") -> Dict:
         if not isinstance(data, dict):
@@ -195,13 +223,11 @@ class ObjectValidator(Validator[Dict]):
         final_data = {}
         errors = []
 
-        # Check required keys
         missing = self.required_keys - data.keys()
         if missing:
              for k in missing:
                  errors.append({"path": f"{path}.{k}" if path else k, "message": "Field is required"})
         
-        # Validate Fields
         for key, value in data.items():
             if key in self.fields:
                 try:
@@ -209,13 +235,11 @@ class ObjectValidator(Validator[Dict]):
                 except ValidationError as e:
                     errors.extend(e.errors)
             else:
-                # Extra keys
                 if self.constraints.get('additional_properties') is False or self.constraints.get('strict'):
                      errors.append({"path": f"{path}.{key}" if path else key, "message": "Extra field not allowed"})
                 else:
                     final_data[key] = value
 
-        # Min/Max Properties
         if 'min_properties' in self.constraints or 'min_props' in self.constraints:
              limit = int(self.constraints.get('min_properties') or self.constraints.get('min_props') or 0)
              if len(data) < limit:
@@ -229,12 +253,17 @@ class ObjectValidator(Validator[Dict]):
 class LiteralValidator(Validator[Any]):
     __slots__ = ('allowed_values',)
     
-    def __init__(self, allowed_values: Tuple[Any, ...]):
+    def __init__(self, allowed_values: Tuple[Any, ...], metadata: Dict[str, Any] = None):
+        metadata = metadata or {}
+        super().__init__(
+            title=metadata.get('title'),
+            description=metadata.get('description'),
+            default=metadata.get('default')
+        )
         self.allowed_values = allowed_values
 
     def validate(self, data: Any, path: str = "") -> Any:
         if data not in self.allowed_values:
-            # Format expected values for friendly error
             allowed = ", ".join(repr(v) for v in self.allowed_values)
             raise ValidationError(f"Value must be one of: {allowed}", [{"path": path, "message": f"Expected one of: {allowed}"}])
         return data
