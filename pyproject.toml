@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "pytastic"
-version = "0.0.7"
+version = "0.1.0"
 description = "A dependency-free JSON validation library using TypedDict and Annotated"
 authors = ["Tersoo <tersoo@example.com>"]
 readme = "README.md"
