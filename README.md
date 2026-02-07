@@ -4,6 +4,8 @@
 
 Pytastic is a lightweight validation layer that respects your standard Python type hints. If you know `TypedDict` and `Annotated`, you already know how to use Pytastic.
 
+View Docs at [Pytastic Documentation](https://rayattack.github.io/pytastic/)
+
 ## Why?
 - **Zero Dependencies**: Pure Python standard library.
 - **No Learning Curve**: It's just standard Python typing.
