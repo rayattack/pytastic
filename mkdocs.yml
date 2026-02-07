@@ -1,0 +1,47 @@
+site_name: Pytastic
+site_description: Zero-dependency JSON validation for Python using TypedDict and Annotated.
+site_url: https://github.com/tersoo/pytastic
+repo_url: https://github.com/tersoo/pytastic
+repo_name: tersoo/pytastic
+
+theme:
+  name: material
+  features:
+    - content.code.copy
+    - content.tabs.link
+    - navigation.expand
+    - navigation.indexes
+    - navigation.top
+  palette:
+    - scheme: default
+      primary: teal
+      accent: purple
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      primary: teal
+      accent: purple
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+
+nav:
+  - Home: index.md
+  - Annotation Syntax: syntax.md
+  - Advanced Usage: advanced.md
+  - JSON Schema: json_schema.md
+
+markdown_extensions:
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+  - admonition
+  - attr_list
+  - def_list
