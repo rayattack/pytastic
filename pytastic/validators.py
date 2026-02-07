@@ -16,13 +16,13 @@ class Validator(ABC, Generic[T]):
         self.default = default
 
     @abstractmethod
-    def validate(self, data: Any, path: str = "") -> T:
+    def validate(self, data: Any, path: str = "", context: Any = None) -> T:
         pass
 
 class AnyValidator(Validator[Any]):
     __slots__ = ()
     
-    def validate(self, data: Any, path: str = "") -> Any:
+    def validate(self, data: Any, path: str = "", context: Any = None) -> Any:
         return data
 
 class NumberValidator(Validator[Union[int, float]]):
@@ -41,13 +41,8 @@ class NumberValidator(Validator[Union[int, float]]):
         self.exclusive_max_val = float(constraints['exclusive_max']) if 'exclusive_max' in constraints else None
         step = constraints.get('step') or constraints.get('multiple_of')
         self.step_val = float(step) if step else None
-
-    # ... validate method remains same ... (wait, I need to preserve it or replace it? replace_file_content replaces the whole block)
-    # I should use multi_replace for less risk if I don't want to rewrite logic.
-    # But I see I need to verify `validate` logic isn't touched.
-    # Actually, I can just copy the validate logic.
     
-    def validate(self, data: Any, path: str = "") -> Union[int, float]:
+    def validate(self, data: Any, path: str = "", context: Any = None) -> Union[int, float]:
         if not isinstance(data, (int, float)):
             raise ValidationError(f"Expected number, got {type(data).__name__}", [{"path": path, "message": "Invalid type"}])
         
@@ -90,7 +85,7 @@ class StringValidator(Validator[str]):
         self.pattern = constraints.get('regex') or constraints.get('pattern')
         self.format = constraints.get('format')
 
-    def validate(self, data: Any, path: str = "") -> str:
+    def validate(self, data: Any, path: str = "", context: Any = None) -> str:
         if not isinstance(data, str):
             raise ValidationError(f"Expected string, got {type(data).__name__}", [{"path": path, "message": "Invalid type"}])
         
@@ -105,19 +100,34 @@ class StringValidator(Validator[str]):
         if self.pattern and isinstance(self.pattern, str) and not re.search(self.pattern, val):
             raise ValidationError(f"String does not match pattern '{self.pattern}'", [{"path": path, "message": "Pattern mismatch"}])
 
+        if self.format:
+            self._validate_format(val, path)
+        
+        return val
+
+    def _validate_format(self, val: str, path: str):
         if self.format == 'email':
             if '@' not in val:
                 raise ValidationError("Invalid email format", [{"path": path, "message": "Invalid email"}])
         elif self.format == 'uuid':
             if not re.match(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$', val.lower()):
                  raise ValidationError("Invalid UUID format", [{"path": path, "message": "Invalid UUID"}])
-        
-        return val
+        elif self.format == 'ipv4':
+            parts = val.split('.')
+            if len(parts) != 4 or not all(p.isdigit() and 0 <= int(p) <= 255 for p in parts):
+                raise ValidationError("Invalid IPv4 format", [{"path": path, "message": "Invalid IPv4"}])
+        elif self.format == 'date-time':
+             # Simple ISO8601 check (YYYY-MM-DDTHH:MM:SS)
+             if not re.match(r'^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}', val):
+                 raise ValidationError("Invalid date-time format", [{"path": path, "message": "Invalid date-time"}])
+        elif self.format == 'uri':
+             if not re.match(r'^[a-zA-Z][a-zA-Z0-9+.-]*:', val):
+                  raise ValidationError("Invalid URI format", [{"path": path, "message": "Invalid URI"}])
 
 class CollectionValidator(Validator[list]):
-    __slots__ = ('constraints', 'item_validator')
+    __slots__ = ('constraints', 'item_validator', 'contains_validator')
     
-    def __init__(self, constraints: Dict[str, Any], item_validator: Union[Validator, List[Validator], None] = None):
+    def __init__(self, constraints: Dict[str, Any], item_validator: Union[Validator, List[Validator], None] = None, contains_validator: Optional[Validator] = None):
         super().__init__(
             title=constraints.get('title'),
             description=constraints.get('description'),
@@ -125,8 +135,9 @@ class CollectionValidator(Validator[list]):
         )
         self.constraints = constraints
         self.item_validator = item_validator
+        self.contains_validator = contains_validator
 
-    def validate(self, data: Any, path: str = "") -> list:
+    def validate(self, data: Any, path: str = "", context: Any = None) -> list:
         if not isinstance(data, (list, tuple)):
              raise ValidationError(f"Expected list/tuple, got {type(data).__name__}", [{"path": path, "message": "Invalid type"}])
         
@@ -157,13 +168,25 @@ class CollectionValidator(Validator[list]):
                  raise ValidationError(f"Expected {len(self.item_validator)} items, got {len(data)}", [{"path": path, "message": f"Expected {len(self.item_validator)} items"}])
              
              for i, (item, validator) in enumerate(zip(data, self.item_validator)):
-                 validated_data.append(validator.validate(item, path=f"{path}[{i}]"))
+                 validated_data.append(validator.validate(item, path=f"{path}[{i}]", context=context))
         
         elif isinstance(self.item_validator, Validator):
              for i, item in enumerate(data):
-                 validated_data.append(self.item_validator.validate(item, path=f"{path}[{i}]"))
+                 validated_data.append(self.item_validator.validate(item, path=f"{path}[{i}]", context=context))
         else:
             validated_data = list(data)
+
+        if self.contains_validator:
+            found = False
+            for item in data:
+                try:
+                    self.contains_validator.validate(item, path=path, context=context)
+                    found = True
+                    break
+                except ValidationError:
+                    continue
+            if not found:
+                raise ValidationError("List does not contain required item", [{"path": path, "message": "Contains check failed"}])
 
         return validated_data
 
@@ -180,13 +203,13 @@ class UnionValidator(Validator[Any]):
         self.validators = validators
         self.mode = mode
 
-    def validate(self, data: Any, path: str = "") -> Any:
+    def validate(self, data: Any, path: str = "", context: Any = None) -> Any:
         valid_results = []
         errors = []
 
         for v in self.validators:
             try:
-                valid_results.append(v.validate(data, path))
+                valid_results.append(v.validate(data, path, context=context))
             except ValidationError as e:
                 errors.append(e)
         
@@ -203,10 +226,65 @@ class UnionValidator(Validator[Any]):
         
         raise ValidationError("Matches none of the allowed types", [{"path": path, "message": "No match for Union"}])
 
-class ObjectValidator(Validator[Dict]):
-    __slots__ = ('fields', 'constraints', 'required_keys')
+class ConditionalValidator(Validator[T]):
+    __slots__ = ('condition', 'validator')
+
+    def __init__(self, condition: str, validator: Validator[T]):
+        super().__init__()
+        self.condition = condition
+        self.validator = validator
     
-    def __init__(self, fields: Dict[str, Validator], constraints: Dict[str, Any], required_keys: Set[str]):
+    def validate(self, data: Any, path: str = "", context: Any = None) -> T:
+        target = context if context is not None else data
+        
+        if self._check_condition(self.condition, target):
+            return self.validator.validate(data, path, context)
+        return data
+
+    def _check_condition(self, condition: str, context: Any) -> bool:
+        if not isinstance(context, dict): return False
+        try:
+            key, val = condition.split('==')
+            key = key.strip()
+            val = val.strip()
+            # Simple string equality for now.
+            return str(context.get(key)) == val
+        except ValueError:
+            return False
+
+class OrValidator(Validator[T]):
+    __slots__ = ('validators',)
+
+    def __init__(self, validators: List[Validator[T]]):
+        super().__init__()
+        self.validators = validators
+
+    def validate(self, data: Any, path: str = "", context: Any = None) -> T:
+        for v in self.validators:
+            try:
+                return v.validate(data, path, context)
+            except ValidationError:
+                continue
+        raise ValidationError("Matches none of the allowed constraints", [{"path": path, "message": "OR check failed"}])
+
+class NotValidator(Validator[T]):
+    __slots__ = ('validator',)
+
+    def __init__(self, validator: Validator[T]):
+        super().__init__()
+        self.validator = validator
+
+    def validate(self, data: Any, path: str = "", context: Any = None) -> T:
+        try:
+            self.validator.validate(data, path, context)
+        except ValidationError:
+            return data
+        raise ValidationError("Value matches forbidden constraint", [{"path": path, "message": "NOT check failed"}])
+
+class ObjectValidator(Validator[Dict]):
+    __slots__ = ('fields', 'constraints', 'required_keys', 'conditional_required')
+    
+    def __init__(self, fields: Dict[str, Validator], constraints: Dict[str, Any], required_keys: Set[str], conditional_required: List[Tuple[str, str]] = None):
         super().__init__(
             title=constraints.get('title'),
             description=constraints.get('description'),
@@ -215,23 +293,36 @@ class ObjectValidator(Validator[Dict]):
         self.fields = fields
         self.constraints = constraints
         self.required_keys = required_keys
+        self.conditional_required = conditional_required or []
 
-    def validate(self, data: Any, path: str = "") -> Dict:
+    def validate(self, data: Any, path: str = "", context: Any = None) -> Dict:
         if not isinstance(data, dict):
             raise ValidationError(f"Expected object, got {type(data).__name__}", [{"path": path, "message": "Invalid type"}])
         
         final_data = {}
         errors = []
+        
+        # Determine effective required keys
+        effective_required = self.required_keys.copy()
+        
+        # Check conditional requirements
+        # conditional_required is a list of (condition_str, field_name)
+        for cond, field in self.conditional_required:
+            if self._check_condition(cond, data):
+                effective_required.add(field)
 
-        missing = self.required_keys - data.keys()
+        missing = effective_required - data.keys()
         if missing:
              for k in missing:
                  errors.append({"path": f"{path}.{k}" if path else k, "message": "Field is required"})
         
+        # Use data as context for children
+        child_context = data 
+
         for key, value in data.items():
             if key in self.fields:
                 try:
-                    final_data[key] = self.fields[key].validate(value, path=f"{path}.{key}" if path else key)
+                    final_data[key] = self.fields[key].validate(value, path=f"{path}.{key}" if path else key, context=child_context)
                 except ValidationError as e:
                     errors.extend(e.errors)
             else:
@@ -250,6 +341,16 @@ class ObjectValidator(Validator[Dict]):
 
         return final_data
 
+    def _check_condition(self, condition: str, context: Any) -> bool:
+        if not isinstance(context, dict): return False
+        try:
+            key, val = condition.split('==')
+            key = key.strip()
+            val = val.strip()
+            return str(context.get(key)) == val
+        except ValueError:
+            return False
+
 class LiteralValidator(Validator[Any]):
     __slots__ = ('allowed_values',)
     
@@ -262,7 +363,7 @@ class LiteralValidator(Validator[Any]):
         )
         self.allowed_values = allowed_values
 
-    def validate(self, data: Any, path: str = "") -> Any:
+    def validate(self, data: Any, path: str = "", context: Any = None) -> Any:
         if data not in self.allowed_values:
             allowed = ", ".join(repr(v) for v in self.allowed_values)
             raise ValidationError(f"Value must be one of: {allowed}", [{"path": path, "message": f"Expected one of: {allowed}"}])
