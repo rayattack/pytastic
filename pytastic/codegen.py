@@ -86,13 +86,13 @@ class CodegenCompiler:
             elif base_type is str:
                 base_lines = self._gen_string(var_name, path_var, constraints, indent)
             elif self._is_typeddict(base_type):
-                base_lines = self._gen_object(base_type, var_name, path_var, context_var, constraints, indent)
+                base_lines = self._gen_object(base_type, var_name, path_var, context_var, constraints, indent, strip=strip, partial=partial)
             elif base_origin is list or base_origin is List:
                 inner_type = get_args(base_type)[0] if get_args(base_type) else Any
-                base_lines = self._gen_list(var_name, path_var, context_var, inner_type, constraints, indent)
+                base_lines = self._gen_list(var_name, path_var, context_var, inner_type, constraints, indent, strip=strip, partial=partial)
             elif base_origin is tuple or base_origin is Tuple:
                 inner_types = get_args(base_type)
-                base_lines = self._gen_tuple(var_name, path_var, context_var, inner_types, constraints, indent)
+                base_lines = self._gen_tuple(var_name, path_var, context_var, inner_types, constraints, indent, strip=strip, partial=partial)
             
             lines.extend(base_lines)
             
@@ -119,17 +119,17 @@ class CodegenCompiler:
                 constraints['strip'] = 'True'
             if partial and 'partial' not in constraints:
                 constraints['partial'] = 'True'
-            return self._gen_object(schema, var_name, path_var, context_var, constraints, indent)
+            return self._gen_object(schema, var_name, path_var, context_var, constraints, indent, strip=strip, partial=partial)
         
         if origin is list or origin is List:
             inner_type = args[0] if args else Any
-            return self._gen_list(var_name, path_var, context_var, inner_type, {}, indent)
+            return self._gen_list(var_name, path_var, context_var, inner_type, {}, indent, strip=strip, partial=partial)
         
         if origin is tuple or origin is Tuple:
-            return self._gen_tuple(var_name, path_var, context_var, args, {}, indent)
+            return self._gen_tuple(var_name, path_var, context_var, args, {}, indent, strip=strip, partial=partial)
         
         if origin is Union:
-            return self._gen_union(var_name, path_var, context_var, args, indent)
+            return self._gen_union(var_name, path_var, context_var, args, indent, strip=strip, partial=partial)
         
         if origin is Literal:
             return self._gen_literal(var_name, path_var, args, indent)
@@ -150,7 +150,7 @@ class CodegenCompiler:
             lines.append(f"{ind}    raise ValidationError(f'Expected None at {{{path_var}}}', [{{'path': {path_var}, 'message': 'Must be None'}}])")
 
         if origin is NotRequired or origin is Required:
-            return self._generate_validator(args[0], var_name, path_var, context_var, indent)
+            return self._generate_validator(args[0], var_name, path_var, context_var, indent, strip=strip, partial=partial)
         
         return lines
 
@@ -309,8 +309,9 @@ class CodegenCompiler:
 
         return lines
     
-    def _gen_object(self, td_cls: Type, var: str, path: str, context: str, constraints: Dict, indent: int) -> List[str]:
+    def _gen_object(self, td_cls: Type, var: str, path: str, context: str, constraints: Dict, indent: int, strip: bool = False, partial: bool = False) -> List[str]:
         """Generate object/TypedDict validation code."""
+        partial = partial or bool(constraints.get('partial'))
         ind = '    ' * indent
         lines = []
         
@@ -343,10 +344,11 @@ class CodegenCompiler:
                 ind = '    ' * indent
             
             field_path = f"{path} + '.{key}'" if path != "''" else f"'{key}'"
-            # Pass child_context (var) to sub-generators
-            field_lines = self._generate_validator(field_type, field_var, field_path, child_context, indent)
+            field_lines = self._generate_validator(field_type, field_var, field_path, child_context, indent, strip=strip, partial=partial)
             lines.extend(field_lines)
-            
+
+            if strip: lines.append(f"{ind}{var}['{key}'] = {field_var}")
+
             if not is_required:
                 indent -= 1
                 ind = '    ' * indent
@@ -369,7 +371,7 @@ class CodegenCompiler:
 
         return lines
     
-    def _gen_list(self, var: str, path: str, context: str, item_type: Type, constraints: Dict, indent: int) -> List[str]:
+    def _gen_list(self, var: str, path: str, context: str, item_type: Type, constraints: Dict, indent: int, strip: bool = False, partial: bool = False) -> List[str]:
         """Generate list validation code."""
         ind = '    ' * indent
         lines = []
@@ -399,12 +401,16 @@ class CodegenCompiler:
         lines.append(f"{ind}for {idx_var}, {item_var} in enumerate({var}):")
         item_path = f"{path} + f'[{{{idx_var}}}]'"
         # Let's pass 'context' variable (which is parent of list)
-        item_lines = self._generate_validator(item_type, item_var, item_path, context, indent + 1)
+        item_lines = self._generate_validator(item_type, item_var, item_path, context, indent + 1, strip=strip, partial=partial)
         lines.extend(item_lines)
+
+        if strip:
+            inner_ind = '    ' * (indent + 1)
+            lines.append(f"{inner_ind}{var}[{idx_var}] = {item_var}")
         
         return lines
     
-    def _gen_union(self, var: str, path: str, context: str, types: Tuple, indent: int) -> List[str]:
+    def _gen_union(self, var: str, path: str, context: str, types: Tuple, indent: int, strip: bool = False, partial: bool = False) -> List[str]:
         """Generate union validation code."""
         ind = '    ' * indent
         lines = []
@@ -415,7 +421,7 @@ class CodegenCompiler:
         for i, union_type in enumerate(types):
             lines.append(f"{ind}if not _union_match:")
             lines.append(f"{ind}    try:")
-            type_lines = self._generate_validator(union_type, var, path, context, indent + 2)
+            type_lines = self._generate_validator(union_type, var, path, context, indent + 2, strip=strip, partial=partial)
             lines.extend(type_lines)
             lines.append(f"{ind}        _union_match = True")
             lines.append(f"{ind}    except ValidationError as _e:")
@@ -426,7 +432,7 @@ class CodegenCompiler:
         
         return lines
     
-    def _gen_tuple(self, var: str, path: str, context: str, item_types: Tuple[Type, ...], constraints: Dict, indent: int) -> List[str]:
+    def _gen_tuple(self, var: str, path: str, context: str, item_types: Tuple[Type, ...], constraints: Dict, indent: int, strip: bool = False, partial: bool = False) -> List[str]:
         """Generate tuple validation code."""
         ind = '    ' * indent
         lines = []
@@ -445,7 +451,7 @@ class CodegenCompiler:
             temp_var = f"_tuple_item_{indent}_{i}"
             lines.append(f"{ind}{temp_var} = {var}[{i}]")
             
-            item_lines = self._generate_validator(item_type, temp_var, item_path, context, indent)
+            item_lines = self._generate_validator(item_type, temp_var, item_path, context, indent, strip=strip, partial=partial)
             lines.extend(item_lines)
             
         return lines

@@ -1,5 +1,5 @@
 import pytest
-from typing import TypedDict, Annotated, Optional, Any
+from typing import TypedDict, Annotated, Optional, Any, List
 from typing_extensions import NotRequired
 from pytastic.core import Pytastic
 
@@ -61,8 +61,33 @@ class TestRuntimeStrip:
 
 
 class TestNestedStrip:
-    def test_outer_strip_does_not_affect_inner(self, vx):
-        data = {"inner": {"x": 1, "extra_inner": "still here"}, "extra_outer": "gone"}
-        result = vx.validate(Outer, data)
+    def test_runtime_strip_propagates_to_nested(self, vx):
+        data = {"inner": {"x": 1, "extra_inner": "gone"}, "extra_outer": "gone"}
+        result = vx.validate(Outer, data, strip=True)
+        assert "extra_outer" not in result
+        assert "extra_inner" not in result["inner"]
+
+    def test_schema_strip_does_not_propagate_to_nested(self, vx):
+        result = vx.validate(OuterWithStrip, {"inner": {"x": 1, "extra_inner": "stays"}, "extra_outer": "gone"})
         assert "extra_outer" not in result
         assert "extra_inner" in result["inner"]
+
+
+class OuterWithStrip(TypedDict):
+    _: Annotated[Any, "strip=True"]
+    inner: Inner
+
+
+class User(TypedDict):
+    name: str
+
+
+class OuterWithList(TypedDict):
+    users: List[User]
+
+
+class TestListStrip:
+    def test_strip_propagates_into_list(self, vx):
+        data = {"users": [{"name": "Alice", "extra": "gone"}, {"name": "Bob", "extra": "gone"}]}
+        result = vx.validate(OuterWithList, data, strip=True)
+        assert result == {"users": [{"name": "Alice"}, {"name": "Bob"}]}
