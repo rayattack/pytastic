@@ -25,7 +25,7 @@ class Pytastic:
         validator = self.codegen.compile(schema)
         self._registry[schema.__name__] = validator
 
-    def validate(self, schema: Type[T], data: Any, strip: bool = False) -> T:
+    def validate(self, schema: Type[T], data: Any, strip: bool = False, partial: bool = False) -> T:
         """
         Validates data against a schema using code generation.
 
@@ -33,8 +33,10 @@ class Pytastic:
             strip: If True, removes fields from data not defined in the schema.
                    For best performance, define strip=True in the schema's
                    Annotated metadata instead (compiled once, always fast).
+            partial: If True, skips required field checks, validating only
+                     fields that are present. Does not fill defaults.
         """
-        validator = self.codegen.compile(schema, strip=strip)
+        validator = self.codegen.compile(schema, strip=strip, partial=partial)
         return validator(data)
 
     def __getattr__(self, name: str) -> Callable[[Any], Any]:

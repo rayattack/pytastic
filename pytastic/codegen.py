@@ -20,9 +20,9 @@ class CodegenCompiler:
         self._cache: Dict[tuple, Any] = {}
         self._counter = 0
     
-    def compile(self, schema: Type, strip: bool = False) -> Any:
+    def compile(self, schema: Type, strip: bool = False, partial: bool = False) -> Any:
         """Compiles a schema into a fast validation function."""
-        cache_key = (schema, strip)
+        cache_key = (schema, strip, partial)
         if cache_key in self._cache:
             return self._cache[cache_key]
         
@@ -32,7 +32,7 @@ class CodegenCompiler:
         code_lines = []
         code_lines.append(f"def validate_{schema_name}(data, path='', context=None):")
         
-        body_lines = self._generate_validator(schema, 'data', 'path', 'context', indent=1, strip=strip)
+        body_lines = self._generate_validator(schema, 'data', 'path', 'context', indent=1, strip=strip, partial=partial)
         code_lines.extend(body_lines)
         code_lines.append("    return data")
         
@@ -50,7 +50,7 @@ class CodegenCompiler:
         self._cache[cache_key] = validator_func
         return validator_func
     
-    def _generate_validator(self, schema: Type, var_name: str, path_var: str, context_var: str, indent: int, strip: bool = False) -> List[str]:
+    def _generate_validator(self, schema: Type, var_name: str, path_var: str, context_var: str, indent: int, strip: bool = False, partial: bool = False) -> List[str]:
         """Generate validation code for a schema type."""
         origin = get_origin(schema)
         args = get_args(schema)
@@ -117,6 +117,8 @@ class CodegenCompiler:
                          constraints.update(parsed)
             if strip and 'strip' not in constraints:
                 constraints['strip'] = 'True'
+            if partial and 'partial' not in constraints:
+                constraints['partial'] = 'True'
             return self._gen_object(schema, var_name, path_var, context_var, constraints, indent)
         
         if origin is list or origin is List:
@@ -327,8 +329,7 @@ class CodegenCompiler:
                 continue
             
             field_var = f"{var}__{key}"
-            is_required = key in required_keys
-            
+            is_required = key in required_keys and not constraints.get('partial')
 
             if is_required:
                 # Required fields must check for key existence first
