@@ -17,13 +17,14 @@ except ImportError:
 class CodegenCompiler:
     """Generates optimized Python validation functions from type schemas."""
     def __init__(self):
-        self._cache: Dict[Type, Any] = {}
+        self._cache: Dict[tuple, Any] = {}
         self._counter = 0
     
-    def compile(self, schema: Type) -> Any:
+    def compile(self, schema: Type, strip: bool = False) -> Any:
         """Compiles a schema into a fast validation function."""
-        if schema in self._cache:
-            return self._cache[schema]
+        cache_key = (schema, strip)
+        if cache_key in self._cache:
+            return self._cache[cache_key]
         
         schema_name = getattr(schema, '__name__', f'Schema{self._counter}')
         self._counter += 1
@@ -31,7 +32,7 @@ class CodegenCompiler:
         code_lines = []
         code_lines.append(f"def validate_{schema_name}(data, path='', context=None):")
         
-        body_lines = self._generate_validator(schema, 'data', 'path', 'context', indent=1)
+        body_lines = self._generate_validator(schema, 'data', 'path', 'context', indent=1, strip=strip)
         code_lines.extend(body_lines)
         code_lines.append("    return data")
         
@@ -46,10 +47,10 @@ class CodegenCompiler:
         exec(code, namespace)
         validator_func = namespace[f'validate_{schema_name}']
         
-        self._cache[schema] = validator_func
+        self._cache[cache_key] = validator_func
         return validator_func
     
-    def _generate_validator(self, schema: Type, var_name: str, path_var: str, context_var: str, indent: int) -> List[str]:
+    def _generate_validator(self, schema: Type, var_name: str, path_var: str, context_var: str, indent: int, strip: bool = False) -> List[str]:
         """Generate validation code for a schema type."""
         origin = get_origin(schema)
         args = get_args(schema)
@@ -103,7 +104,6 @@ class CodegenCompiler:
         
         if self._is_typeddict(schema):
             constraints = {}
-            # Handle metadata from `_: Annotated[...]` pattern
             if hasattr(schema, '__annotations__') and '_' in schema.__annotations__:
                  meta_annotation = schema.__annotations__.get('_', None)
                  if meta_annotation and get_origin(meta_annotation) is Annotated:
@@ -115,6 +115,8 @@ class CodegenCompiler:
                      parsed = parse_constraints(constraint_str)
                      if isinstance(parsed, dict):
                          constraints.update(parsed)
+            if strip and 'strip' not in constraints:
+                constraints['strip'] = 'True'
             return self._gen_object(schema, var_name, path_var, context_var, constraints, indent)
         
         if origin is list or origin is List:
@@ -327,7 +329,7 @@ class CodegenCompiler:
             field_var = f"{var}__{key}"
             is_required = key in required_keys
             
-            lines.append(f"{ind}#{field_var} logic fixed for Optional")
+
             if is_required:
                 # Required fields must check for key existence first
                 lines.append(f"{ind}if '{key}' not in {var}:")
@@ -348,14 +350,16 @@ class CodegenCompiler:
                 indent -= 1
                 ind = '    ' * indent
         
-        # Additional Properties Check
         if constraints.get('strict') or constraints.get('additional_properties') is False:
              lines.append(f"{ind}known_keys = set({repr(list(type_hints.keys()))}) - {{'_'}}")
              lines.append(f"{ind}extra_keys = set({var}.keys()) - known_keys")
              lines.append(f"{ind}if extra_keys:")
              lines.append(f"{ind}    raise ValidationError(f'Extra fields not allowed at {{{path}}}: {{extra_keys}}', [{{'path': {path}, 'message': 'Extra fields not allowed'}}])")
 
-        # Min Properties
+        if constraints.get('strip'):
+             known = [k for k in type_hints if k != '_']
+             lines.append(f"{ind}{var} = {{k: {var}[k] for k in {repr(known)} if k in {var}}}")
+
         min_props = constraints.get('min_properties') or constraints.get('min_props')
         if min_props:
              min_props_val = int(min_props)

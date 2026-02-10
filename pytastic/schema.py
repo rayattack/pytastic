@@ -83,6 +83,9 @@ class JsonSchemaGenerator:
             schema['items'] = False # No extra items allowed
         elif isinstance(v.item_validator, Validator):
             schema['items'] = self._visit(v.item_validator)
+        
+        if v.contains_validator:
+            schema['contains'] = self._visit(v.contains_validator)
             
         return schema
 
@@ -100,6 +103,22 @@ class JsonSchemaGenerator:
         
         min_p = c.get('min_properties') or c.get('min_props')
         if min_p: schema['minProperties'] = int(min_p)
+
+        if v.conditional_required:
+            all_of = []
+            for cond, field in v.conditional_required:
+                try:
+                    key, val = cond.split('==')
+                    key = key.strip()
+                    val = val.strip()
+                    all_of.append({
+                        "if": {"properties": {key: {"const": val}}, "required": [key]},
+                        "then": {"required": [field]}
+                    })
+                except ValueError:
+                    continue
+            if all_of:
+                schema['allOf'] = all_of
 
         return schema
 
