@@ -1,4 +1,4 @@
-from typing import Any, Type, Dict, TypeVar, Optional, Callable
+from typing import Any, Type, Dict, TypeVar, Optional, Callable, Union, Iterable
 from pytastic.codegen import CodegenCompiler
 from pytastic.exceptions import PytasticError
 from pytastic.schema import JsonSchemaGenerator, to_json_string
@@ -25,7 +25,7 @@ class Pytastic:
         validator = self.codegen.compile(schema)
         self._registry[schema.__name__] = validator
 
-    def validate(self, schema: Type[T], data: Any, strip: bool = False, partial: bool = False) -> T:
+    def validate(self, schema: Type[T], data: Any, strip: bool = False, partial: Union[bool, Iterable[str]] = False) -> T:
         """
         Validates data against a schema using code generation.
 
@@ -33,9 +33,13 @@ class Pytastic:
             strip: If True, removes fields from data not defined in the schema.
                    For best performance, define strip=True in the schema's
                    Annotated metadata instead (compiled once, always fast).
-            partial: If True, skips required field checks, validating only
-                     fields that are present. Does not fill defaults.
+            partial: If True, skips required field checks (all fields optional).
+                     If iterable of strings, only listed fields are optional.
+                     Does not fill defaults.
         """
+        if isinstance(partial, (list, tuple, set)):
+            partial = frozenset(partial)
+            
         validator = self.codegen.compile(schema, strip=strip, partial=partial)
         return validator(data)
 
