@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.1.6] - 2026-02-11
+
+### Added
+- Added support for specifying what fields should be partial in `.validate(..., partial=["field1", "field2"])`.
+
 ## [0.1.5] - 2026-02-10
 
 ### Fixed
